@@ -1,0 +1,38 @@
+--alcune analisi
+
+SELECT sum(quantity) as units_sold, barcode, product_name, brand_name
+FROM sales as s
+JOIN product as p 
+WHERE (s.product_id = p.product_id_a AND s.store = 'A') OR (s.product_id = p.product_id_b AND s.store = 'B')
+GROUP BY barcode;
+
+SELECT *
+FROM sales as s
+JOIN product as p 
+WHERE (s.product_id = p.product_id_a AND s.store = 'A') OR (s.product_id = p.product_id_b AND s.store = 'B')
+GROUP BY barcode;
+
+SELECT *
+FROM sales as s
+JOIN product as p 
+WHERE (s.product_id = p.product_id_a AND s.store = 'A') OR (s.product_id = p.product_id_b AND s.store = 'B');
+
+SELECT barcode, sum(quantity) as units_sold 
+FROM sales
+GROUP BY barcode
+ORDER BY units_sold DESC;
+
+SELECT product_name, product.barcode, sum(quantity*price) as revenue, store
+FROM sales
+JOIN product ON sales.barcode = product.barcode
+GROUP BY sales.barcode, store
+ORDER BY sales.barcode, revenue, store DESC;
+
+SELECT barcode, sum(quantity*price) as revenue_b, (SELECT sum(quantity*price) FROM sales WHERE store = 'A' GROUP BY barcode) as revenue_a
+FROM sales as s
+WHERE store = 'B'
+GROUP BY barcode
+ORDER BY revenue_a, revenue_b DESC;
+
+--analisi 
+
