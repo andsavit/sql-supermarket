@@ -1,0 +1,305 @@
+--attach dei database per poterli usare nello stesso script con alias 
+ATTACH DATABASE '/Users/andrea/Downloads/supermarket01.db' AS dbA;
+
+ATTACH DATABASE '/Users/andrea/Downloads/supermarket02.db' AS dbB;
+
+--creazione header tabella promozione
+CREATE TABLE promotion AS SELECT * FROM dba.promotion WHERE 1=0;
+
+--creazione tabella promotion fusione
+INSERT INTO promotion
+    SELECT *
+    FROM dba.promotion
+    UNION
+    SELECT *
+    FROM dbb.promotion;
+--verifica inclusione di tutte le tuple di a e b nella nuova tabella    
+SELECT * FROM dba.promotion
+EXCEPT
+SELECT * FROM promotion;
+
+SELECT * FROM dbb.promotion
+EXCEPT
+SELECT * FROM promotion;
+
+--crea una tabella "sales" per db A
+SELECT customer_id, product_id, date, quantity, price, promotion_id
+FROM dba.bill as b
+JOIN dba.item_in_bill as i
+ON b.bill_id = i.bill_id;
+
+--tabella acquisti del mkt A nello stesso formato di B
+SELECT customer_id, product_id, date, quantity, price, promotion_id
+FROM dba.bill as b
+JOIN dba.item_in_bill as i
+ON b.bill_id = i.bill_id;
+
+--verifica insiemistica dei barcode: 242 in A ma non in B, 76 in entrambi, 263 in B ma non in A
+SELECT code
+FROM dba.barcode
+INTERSECT 
+SELECT code
+FROM dbb.barcode;
+
+SELECT code        
+FROM dba.barcode
+EXCEPT 
+SELECT code
+FROM dbb.barcode;
+
+--verifica che ogni barcode sia associato ad un prod_id nei due db
+--A:
+SELECT product_id
+FROM dba.product
+EXCEPT 
+SELECT product_id
+FROM dba.barcode;
+--B:
+SELECT product_id
+FROM dbb.barcode
+EXCEPT 
+SELECT product_id
+FROM dbb.product; 
+--risultato: tutti i barcode sono usati e tutti i prodotti hanno un barcode
+
+--creazione tabella product fusione. la prima colonna è incrementale auto generata
+--DROP TABLE product;
+CREATE TABLE product(
+    id integer PRIMARY KEY,
+    barcode integer,
+    product_id_a integer(5),
+    product_id_b integer(5),
+    product_name varchar(20),
+    brand_name varchar(20)
+);
+
+--prova tabella
+--INSERT INTO product(id, product_id_a, product_id_b, product_name, brand_name)
+--VALUES(NULL,3,4,'ciao','bello');
+--DELETE FROM product
+
+--inserisce i barcode nella tabella
+INSERT INTO product(barcode)
+SELECT code as barcode
+FROM dba.barcode
+UNION
+SELECT code as barcode
+FROM dbb.barcode;
+
+
+-- in caso di conflitto, tenere nome e marca di uno o dell'altro?
+SELECT product_name, brand_name
+FROM dba.product
+INTERSECT
+SELECT product_name, brand_name
+FROM dbb.product; -- stessi barcode (76) hanno anche stesso nome (76), no problem
+
+
+--inserisce nella tabella product i dati dei prodotti di A
+UPDATE product
+SET product_id_a = (
+        SELECT c1.product_id
+        FROM dba.product AS c1
+        JOIN dba.barcode AS c2 ON c1.product_id = c2.product_id
+        WHERE c2.code = product.barcode
+    ),
+    product_name = (
+        SELECT c1.product_name
+        FROM dba.product AS c1
+        JOIN dba.barcode AS c2 ON c1.product_id = c2.product_id
+        WHERE c2.code = product.barcode
+    ),
+    brand_name = (
+        SELECT c1.brand_name
+        FROM dba.product AS c1
+        JOIN dba.barcode AS c2 ON c1.product_id = c2.product_id
+        WHERE c2.code = product.barcode
+    )
+WHERE EXISTS (
+    SELECT 1
+    FROM dba.product AS c1
+    JOIN dba.barcode AS c2 ON c1.product_id = c2.product_id
+    WHERE c2.code = product.barcode
+);
+
+--inserisce i dati da B (senza sovrascrivere se gia presenti)
+UPDATE product
+SET product_id_b = (
+        SELECT c1.product_id
+        FROM dbb.product AS c1
+        JOIN dbb.barcode AS c2 ON c1.product_id = c2.product_id
+        WHERE c2.code = product.barcode
+    ),
+    product_name = (
+        SELECT c1.product_name
+        FROM dbb.product AS c1
+        JOIN dbb.barcode AS c2 ON c1.product_id = c2.product_id
+        WHERE c2.code = product.barcode
+    ),
+    brand_name = (
+        SELECT c1.brand_name
+        FROM dbb.product AS c1
+        JOIN dbb.barcode AS c2 ON c1.product_id = c2.product_id
+        WHERE c2.code = product.barcode
+    )
+WHERE EXISTS (
+    SELECT 1
+    FROM dbb.product AS c1
+    JOIN dbb.barcode AS c2 ON c1.product_id = c2.product_id
+    WHERE c2.code = product.barcode
+) AND product.product_id_a IS NULL;
+
+--verifica che ogni tupla sia stata riempita
+    SELECT *
+    FROM product
+    WHERE product_id_a IS NULL AND product_id_b IS NULL;
+
+--verifica sui socialsecurity
+
+SELECT customer_id
+FROM dba.customer
+EXCEPT
+SELECT customer_id
+FROM dba.socialsecuritydata; -- tutti gli id hanno codice fiscale
+
+--creazione tbella customer
+
+CREATE TABLE customer(
+    id integer PRIMARY KEY,
+    socialcode integer,
+    customer_id_a integer(5),
+    customer_id_b integer(5),
+    name varchar(20),
+    surname varchar(20),
+    city varchar(20),
+    state_province varchar(20),
+    country varchar(20),
+    gender varchar(20),
+    card_desc_a varchar(20),
+    card_desc_b varchar(20)
+);
+
+--inseriamo i socialcode
+
+--DELETE FROM customer;
+--VACUUM customer;
+
+INSERT INTO customer(socialcode)
+    SELECT code
+    FROM dba.socialsecuritydata
+    UNION
+    SELECT code
+    FROM dbb.socialsecuritydata;
+
+--inserimento dei dati in customer
+--crea una tabella temporanea di join con socialcode e membercard, poi inserisce i dati di A
+WITH enriched AS (
+    SELECT
+        c2.code AS socialcode,
+        c1.customer_id,
+        c1.name,
+        c1.surname,
+        c1.city,
+        c1.state_province,
+        c1.country,
+        c1.gender,
+        mc.description AS card_desc
+    FROM dba.customer AS c1
+    JOIN dba.socialsecuritydata AS c2 ON c1.customer_id = c2.customer_id
+    LEFT JOIN dba.member_card AS mc ON c1.card_type_id = mc.card_type_id
+)
+UPDATE customer
+SET
+    customer_id_a = (
+        SELECT e.customer_id FROM enriched e WHERE e.socialcode = customer.socialcode
+    ),
+    name = (
+        SELECT e.name FROM enriched e WHERE e.socialcode = customer.socialcode
+    ),
+    surname = (
+        SELECT e.surname FROM enriched e WHERE e.socialcode = customer.socialcode
+    ),
+    city = (
+        SELECT e.city FROM enriched e WHERE e.socialcode = customer.socialcode
+    ),
+    state_province = (
+        SELECT e.state_province FROM enriched e WHERE e.socialcode = customer.socialcode
+    ),
+    country = (
+        SELECT e.country FROM enriched e WHERE e.socialcode = customer.socialcode
+    ),
+    gender = (
+        SELECT e.gender FROM enriched e WHERE e.socialcode = customer.socialcode
+    ),
+    card_desc_a = (
+        SELECT e.card_desc FROM enriched e WHERE e.socialcode = customer.socialcode
+    )
+WHERE EXISTS (
+    SELECT 1 FROM enriched e WHERE e.socialcode = customer.socialcode
+);
+
+
+--inserimento dati di B
+WITH enriched AS (
+    SELECT
+        c2.code AS socialcode,
+        c1.customer_id,
+        c1.name,
+        c1.surname,
+        c1.city,
+        c1.state_province,
+        c1.country,
+        c1.gender,
+        c1.fidelitycard AS card_desc
+    FROM dbb.customer AS c1
+    JOIN dbb.socialsecuritydata AS c2 ON c1.customer_id = c2.customer_id
+)
+UPDATE customer
+SET
+    customer_id_b = (
+        SELECT e.customer_id FROM enriched e WHERE e.socialcode = customer.socialcode
+    ),
+    name = (
+        SELECT e.name FROM enriched e WHERE e.socialcode = customer.socialcode
+    ),
+    surname = (
+        SELECT e.surname FROM enriched e WHERE e.socialcode = customer.socialcode
+    ),
+    city = (
+        SELECT e.city FROM enriched e WHERE e.socialcode = customer.socialcode
+    ),
+    state_province = (
+        SELECT e.state_province FROM enriched e WHERE e.socialcode = customer.socialcode
+    ),
+    country = (
+        SELECT e.country FROM enriched e WHERE e.socialcode = customer.socialcode
+    ),
+    gender = (
+        SELECT e.gender FROM enriched e WHERE e.socialcode = customer.socialcode
+    ),
+    card_desc_b = (
+        SELECT e.card_desc FROM enriched e WHERE e.socialcode = customer.socialcode
+    )
+WHERE EXISTS (
+    SELECT 1 FROM enriched e WHERE e.socialcode = customer.socialcode
+);
+
+--tabella sales fusion
+--DROP TABLE sales;
+
+--creazione tabella sales
+CREATE TABLE sales AS
+SELECT s.code as socialcode, p.code as barcode, b.customer_id, date, i.product_id, quantity, price, promotion_id, 'A' as store
+FROM dba.bill as b
+JOIN dba.item_in_bill as i
+ON b.bill_id = i.bill_id
+JOIN dba.socialsecuritydata as s
+ON b.customer_id = s.customer_id
+JOIN dba.barcode as p
+ON i.product_id = p.product_id
+UNION
+SELECT soc.code as socialcode, b.code as barcode, soc.customer_id, time as date, s.product_id, quantity, price, promotion_id, 'B' as store
+FROM dbb.sales as s, dbb.socialsecuritydata as soc, dbb.barcode as b
+WHERE s.product_id = b.product_id AND s.customer_id = soc.customer_id;
+
+--manca una riga?
